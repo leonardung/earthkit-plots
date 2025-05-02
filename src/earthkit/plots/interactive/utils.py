@@ -14,6 +14,8 @@
 
 import collections
 
+from plotly import colors as _pc
+
 
 def recursive_dict_update(original_dict, update_dict):
     """
@@ -57,3 +59,21 @@ def list_to_human(iterable, conjunction="and", oxford_comma=False):
             list_of_strs[0] += ","
 
     return f" {conjunction} ".join(list_of_strs)
+
+
+def discrete_scale(base: str, n_bins: int) -> list[tuple[float, str]]:
+    """
+    Return a *step* colourscale with `n_bins` flat bands sampled from `base`.
+
+    Each band is represented by two consecutive control points that bracket the
+    interval, e.g.  (0.00, blue), (0.25, blue), (0.25, green), (0.50, green) …
+    so that Plotly cannot interpolate between different colours inside a band.
+    """
+    rgb = _pc.sample_colorscale(base, samplepoints=n_bins)
+    step = []
+    for i, col in enumerate(rgb):
+        lo, hi = i / n_bins, (i + 1) / n_bins
+        step.extend([(lo, col), (hi, col)])
+    # ensure final entry is exactly at 1.0
+    step[-1] = (1.0, step[-1][1])
+    return step

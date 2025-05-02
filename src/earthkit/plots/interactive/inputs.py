@@ -141,6 +141,10 @@ def get_xarray_kwargs(data, axes, kwargs):
         "y": data_vars[0],
     }
 
+    if "z" in axes:
+        axis_default["y"] = non_time_dims[0] if non_time_dims else dims[-1]
+        axis_default["z"] = data_vars[0]
+
     axis_attrs = dict()
     assigned_attrs = [
         kwargs.get(axis).split(".")[-1] for axis in axes if axis in kwargs

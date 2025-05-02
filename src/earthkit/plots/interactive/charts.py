@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Sequence
+
+import numpy as np
 from plotly.subplots import make_subplots
 
-from earthkit.plots.interactive import bar, box, inputs, line
+from earthkit.plots.interactive import bar, box, heatmap, inputs, line, times
+from earthkit.plots.interactive.utils import discrete_scale
 
 DEFAULT_LAYOUT = {
     "colorway": [
@@ -73,6 +77,7 @@ class Chart:
         self._subplot_titles = None
         self._subplot_y_titles = None
         self._subplot_x_titles = None
+        self._subplot_z_titles = None
         self._layout_override = dict()
 
     def set_subplot_titles(method):
@@ -92,7 +97,14 @@ class Chart:
                         if kwargs.get("y") is not None:
                             self._subplot_x_titles = titles
                         else:
-                            self._subplot_y_titles = titles
+                            if method.__qualname__ == "Chart.heatmap":
+                                self._subplot_y_titles = [
+                                    times.guess_non_time_dim(ds)
+                                ] * len(titles)
+                                self._subplot_z_titles = titles
+                            else:
+                                self._subplot_y_titles = titles
+
             return method(self, *args, **kwargs)
 
         return wrapper
@@ -219,6 +231,142 @@ class Chart:
                 self.add_trace(trace)
 
     @set_subplot_titles
+    def heatmap(self, *args, **kwargs):
+        """
+        Add a heat-map subplot (wrapper around :pyfunc:`heatmap.heatmap`).
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed straight through to :pyfunc:`heatmap.heatmap` (after
+            removing *colorscale* and *levels*).
+        colorscale : str | list[str], default ``"Viridis"``
+            * Either a single recognised Plotly colourscale name - applied
+              to every subplot/trace;
+            * **or** a list whose length equals the number of heat-map rows,
+              providing a different colourscale per row.
+        levels : list[np.ndarray] | None, optional
+            *Controls colour binning.*
+
+            * Each element must be a 1-D array of monotonically increasing
+              bounds ``[zmin, …, zmax]``.
+            * If the list has length 1, its single array is reused for every
+              trace; otherwise its length **must** match the number of rows.
+            * When *levels* is given, the corresponding *colorscale* is
+              discretised into ``len(bounds) - 1`` constant bands whose
+              edges follow *bounds*.
+
+        Notes
+        -----
+        * Default behaviour is unchanged: 2-D view (*x* = time, *y* = second
+          dimension) with no aggregation.
+        * Shares insertion and layout logic with :pyfunc:`box` and
+          :pyfunc:`line`.
+        """
+
+        kwargs.pop("time_axis", None)
+        colorscale = kwargs.pop("colorscale", "Viridis")
+        levels = kwargs.pop("levels", None)
+
+        base_traces = heatmap.heatmap(*args, **kwargs)
+        traces = base_traces if isinstance(base_traces[0], list) else [base_traces]
+
+        n_rows = len(traces)
+        if isinstance(colorscale, str):
+            cs_list = [colorscale] * n_rows
+        elif isinstance(colorscale, Sequence) and all(
+            isinstance(c, str) for c in colorscale
+        ):
+            if len(colorscale) != n_rows:
+                raise ValueError(
+                    f"`colorscale` list length ({len(colorscale)}) "
+                    f"must match number of rows ({n_rows})."
+                )
+            cs_list = list(colorscale)
+        else:
+            raise TypeError("`colorscale` must be a string or list of strings.")
+
+        if levels is None:
+            lev_list = [None] * n_rows
+        elif isinstance(levels, (Sequence, np.ndarray)):
+            if len(levels) == 1:
+                lev_list = list(levels) * n_rows
+            elif not isinstance(levels[0], (Sequence, np.ndarray)):
+                lev_list = [levels] * n_rows
+            elif len(levels) == n_rows:
+                lev_list = list(levels)
+            else:
+                raise ValueError(
+                    f"`levels` must have length 1 or {n_rows} (rows), "
+                    f"got {len(levels)}."
+                )
+            lev_list = [
+                np.array(inner) if inner is not None else None for inner in lev_list
+            ]
+            for arr in lev_list:
+                if arr is None:
+                    continue
+                if arr.ndim != 1:
+                    raise TypeError("Each element of `levels` must be 1-D list.")
+                if arr.size < 2 or not np.all(np.diff(arr) > 0):
+                    raise ValueError(
+                        "`levels` arrays must be increasing and length ≥ 2."
+                    )
+        else:
+            raise TypeError("`levels` must be a list/tuple of numpy arrays or None.")
+
+        rows_needed = self._rows or n_rows
+        for i, (trace, cs_name, bounds) in enumerate(
+            zip(traces, cs_list, lev_list), start=1
+        ):
+            for subtrace in trace:
+                if bounds is not None:
+                    n_bins = bounds.size - 1
+                    custom_cmap = discrete_scale(cs_name, n_bins)
+                    subtrace.update(
+                        colorscale=custom_cmap,
+                        zmin=bounds[0],
+                        zmax=bounds[-1],
+                        colorbar=dict(
+                            tickmode="array",
+                            tickvals=bounds,
+                            ticktext=[
+                                f"{lo}-{hi}" for lo, hi in zip(bounds[:-1], bounds[1:])
+                            ],
+                        ),
+                    )
+                else:
+                    subtrace.update(colorscale=cs_name)
+
+                coloraxis_name = f"coloraxis{i}"
+                subtrace.update(coloraxis=coloraxis_name)
+
+                if self._fig is None:
+                    self._rows = rows_needed
+                    self._columns = self._columns or 1
+
+                y0, y1 = self.fig.layout[f"yaxis{i}"].domain
+                height = y1 - y0
+
+                self.fig.update_layout(
+                    **{
+                        coloraxis_name: dict(
+                            colorscale=subtrace.colorscale,
+                            cmin=subtrace.zmin if hasattr(subtrace, "zmin") else None,
+                            cmax=subtrace.zmax if hasattr(subtrace, "zmax") else None,
+                            colorbar=dict(
+                                y=y0,
+                                yanchor="bottom",
+                                len=height,
+                                lenmode="fraction",
+                                ypad=0,
+                            ),
+                        )
+                    }
+                )
+                self.add_trace(subtrace, row=i, col=1)
+
+    @set_subplot_titles
     def bar(self, *args, **kwargs):
         """
         Adds a bar plot to the chart.
@@ -311,4 +459,21 @@ class Chart:
                         },
                     }
                 )
+            if self._subplot_z_titles:
+                for i, ztitle in enumerate(self._subplot_z_titles):
+                    ca = f"coloraxis{i+1}"
+                    if ca in self.fig.layout:
+                        self.fig.update_layout(
+                            **{
+                                ca: dict(
+                                    colorbar=dict(
+                                        title=dict(
+                                            text=ztitle,
+                                            side="right",
+                                        ),
+                                    )
+                                )
+                            }
+                        )
+
         return self.fig.show(*args, **kwargs)
