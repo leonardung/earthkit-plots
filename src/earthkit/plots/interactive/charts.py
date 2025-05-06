@@ -264,6 +264,29 @@ class Chart:
           :pyfunc:`line`.
         """
 
+        def _is_named_color(color_str: str) -> bool:
+            """
+            Return True if `color_str` is a valid Plotly colour specification
+            (hex, rgb/rgba, hsl, hsv or named), False otherwise.
+            """
+            import plotly.graph_objects as go
+
+            try:
+                go.Figure(data=[go.Scatter(marker=dict(color=color_str))])
+                return True
+            except (ValueError, TypeError):
+                return False
+
+        def _is_named_colorscale(name: str) -> bool:
+            """Return *True* if *name* is a Plotly-recognised colorscale."""
+            import plotly.colors as pc
+
+            try:
+                pc.get_colorscale(name)
+                return True
+            except Exception:
+                return False
+
         kwargs.pop("time_axis", None)
         colorscale = kwargs.pop("colorscale", "Viridis")
         levels = kwargs.pop("levels", None)
@@ -274,15 +297,31 @@ class Chart:
         n_rows = len(traces)
         if isinstance(colorscale, str):
             cs_list = [colorscale] * n_rows
-        elif isinstance(colorscale, Sequence) and all(
-            isinstance(c, str) for c in colorscale
-        ):
-            if len(colorscale) != n_rows:
-                raise ValueError(
-                    f"`colorscale` list length ({len(colorscale)}) "
-                    f"must match number of rows ({n_rows})."
-                )
-            cs_list = list(colorscale)
+        elif isinstance(colorscale, Sequence):
+            if all(_is_named_colorscale(c) for c in colorscale):
+                if len(colorscale) != n_rows:
+                    raise ValueError(
+                        f"`colorscale` list length ({len(colorscale)}) "
+                        f"must match number of rows ({n_rows})."
+                    )
+                cs_list = list(colorscale)
+            elif all(isinstance(c, str) and _is_named_color(c) for c in colorscale):
+                cs_list = [colorscale] * n_rows
+            elif all(isinstance(c, Sequence) for c in colorscale):
+                if len(colorscale) != n_rows:
+                    raise ValueError(
+                        f"`colorscale` list length ({len(colorscale)}) "
+                        f"must match number of rows ({n_rows})."
+                    )
+                if all(all(_is_named_color(c) for c in cs) for cs in colorscale):
+                    cs_list = colorscale
+                else:
+                    raise ValueError(
+                        "`colorscale` list must contain either "
+                        "named colours or named colorscales."
+                    )
+            else:
+                raise TypeError("`colorscale` must be a string or list of strings.")
         else:
             raise TypeError("`colorscale` must be a string or list of strings.")
 
@@ -320,26 +359,17 @@ class Chart:
             zip(traces, cs_list, lev_list), start=1
         ):
             for subtrace in trace:
+                coloraxis_name = f"coloraxis{i}"
                 if bounds is not None:
-                    n_bins = bounds.size - 1
-                    custom_cmap = discrete_scale(cs_name, n_bins)
+                    custom_cmap = discrete_scale(cs_name, bounds)
                     subtrace.update(
+                        coloraxis=coloraxis_name,
                         colorscale=custom_cmap,
                         zmin=bounds[0],
                         zmax=bounds[-1],
-                        colorbar=dict(
-                            tickmode="array",
-                            tickvals=bounds,
-                            ticktext=[
-                                f"{lo}-{hi}" for lo, hi in zip(bounds[:-1], bounds[1:])
-                            ],
-                        ),
                     )
                 else:
-                    subtrace.update(colorscale=cs_name)
-
-                coloraxis_name = f"coloraxis{i}"
-                subtrace.update(coloraxis=coloraxis_name)
+                    subtrace.update(coloraxis=coloraxis_name, colorscale=cs_name)
 
                 if self._fig is None:
                     self._rows = rows_needed
@@ -360,8 +390,15 @@ class Chart:
                                 len=height,
                                 lenmode="fraction",
                                 ypad=0,
+                                tickvals=bounds,
                             ),
-                        )
+                        ),
+                        "xaxis": dict(
+                            showspikes=True,
+                            spikethickness=0,
+                            spikemode="across",
+                            spikesnap="cursor",
+                        ),
                     }
                 )
                 self.add_trace(subtrace, row=i, col=1)

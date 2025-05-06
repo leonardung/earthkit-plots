@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+from typing import Sequence
 
 from plotly import colors as _pc
 
@@ -61,19 +62,57 @@ def list_to_human(iterable, conjunction="and", oxford_comma=False):
     return f" {conjunction} ".join(list_of_strs)
 
 
-def discrete_scale(base: str, n_bins: int) -> list[tuple[float, str]]:
+def discrete_scale(
+    colors: str | Sequence[str],
+    bounds: Sequence[float] | None = None,
+    n_bins: int = 12,
+) -> list[tuple[float, str]]:
     """
-    Return a *step* colourscale with `n_bins` flat bands sampled from `base`.
+    Return a *step* colourscale with flat bands, either:
 
-    Each band is represented by two consecutive control points that bracket the
-    interval, e.g.  (0.00, blue), (0.25, blue), (0.25, green), (0.50, green) …
-    so that Plotly cannot interpolate between different colours inside a band.
+    1. By explicit `bounds=[b0,b1,…,bN]` (creates N intervals), or
+    2. By specifying `n_bins=k` (divides the range [0,1] into k equal bands).
+
+    `colors` can be:
+      - a named Plotly colourscale (str), or
+      - a list of k hex/RGB strings (len must match #intervals).
     """
-    rgb = _pc.sample_colorscale(base, samplepoints=n_bins)
-    step = []
-    for i, col in enumerate(rgb):
-        lo, hi = i / n_bins, (i + 1) / n_bins
-        step.extend([(lo, col), (hi, col)])
-    # ensure final entry is exactly at 1.0
-    step[-1] = (1.0, step[-1][1])
-    return step
+    # mode checks
+    if bounds is None and n_bins is None:
+        raise ValueError("Must supply either bounds or n_bins")
+
+    # determine bins & normalization domain
+    if bounds is not None:
+        if len(bounds) < 2 or any(
+            bounds[i] >= bounds[i + 1] for i in range(len(bounds) - 1)
+        ):
+            raise ValueError(
+                "bounds must be a strictly increasing sequence of ≥2 values"
+            )
+        lo0, hiN = bounds[0], bounds[-1]
+        intervals = [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
+        k = len(intervals)
+    else:
+        # equal-spaced bins on [0,1]
+        if n_bins < 1:
+            raise ValueError("n_bins must be ≥1")
+        lo0, hiN = 0.0, 1.0
+        k = n_bins
+        intervals = [(i / n_bins, (i + 1) / n_bins) for i in range(n_bins)]
+
+    # get colours
+    if isinstance(colors, str):
+        # sample from named scale
+        rgb = _pc.sample_colorscale(colors, samplepoints=k)
+    else:
+        rgb = colors  # type: ignore
+
+    # build stepped colourscale
+    out: list[tuple[float, str]] = []
+    for (lo, hi), col in zip(intervals, rgb):
+        # if using bounds mode, normalize lo/hi into [0,1]
+        if bounds is not None:
+            lo, hi = (lo - lo0) / (hiN - lo0), (hi - lo0) / (hiN - lo0)
+        out.extend([(lo, col), (hi, col)])
+
+    return out
