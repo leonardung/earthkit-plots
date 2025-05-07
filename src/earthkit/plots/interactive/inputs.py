@@ -105,9 +105,6 @@ def sanitise(axes=("x", "y"), multiplot=True):
                         )
                         traces.append(function(*args, **trace_kwargs))
                 else:
-                    # transpose the data to put the time dimension last
-                    new_order = [dim for dim in ds.dims if dim != time_dim] + [time_dim]
-                    ds = ds.transpose(*new_order)
                     trace_kwargs = get_xarray_kwargs(ds, axes, kwargs)
                     if not multiplot:
                         if time_axis is None:

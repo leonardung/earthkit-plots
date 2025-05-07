@@ -340,7 +340,14 @@ class Chart:
         base_axis = 0
         if self._fig is not None:
             base_axis = len(self._fig.data)
-
+        # transpose the data to put the time dimension last
+        ds = args[0]
+        time_dim = times.guess_time_dim(ds)
+        new_order = [dim for dim in ds.dims if dim != time_dim] + [time_dim]
+        ds = ds.transpose(*new_order)
+        args_list = list(args)
+        args_list[0] = ds
+        args = tuple(args_list)
         base_traces = heatmap.heatmap(*args, **kwargs)
         traces = base_traces if isinstance(base_traces[0], list) else [base_traces]
 
