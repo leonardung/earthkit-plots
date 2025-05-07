@@ -158,11 +158,7 @@ class Chart:
                     **self._subplots_kwargs,
                 )
                 for key, val in old_layout.items():
-                    if (
-                        key == "annotations"
-                        or key.startswith("xaxis")
-                        or key.startswith("yaxis")
-                    ):
+                    if key == "annotations":
                         continue
                     new_fig.layout[key] = val
                 for trace in existing_traces:
@@ -341,7 +337,7 @@ class Chart:
         if self._fig is not None:
             base_axis = len(self._fig.data)
         # transpose the data to put the time dimension last
-        ds = args[0]
+        ds = inputs.to_xarray(args[0])
         time_dim = times.guess_time_dim(ds)
         new_order = [dim for dim in ds.dims if dim != time_dim] + [time_dim]
         ds = ds.transpose(*new_order)
