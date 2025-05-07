@@ -82,28 +82,52 @@ class Chart:
 
     def set_subplot_titles(method):
         def wrapper(self, *args, **kwargs):
-            if self._subplot_titles is None:
+            # Always try to extract dataset and derive new titles
+            new_titles = []
+            try:
                 if args:
-                    try:
-                        ds = inputs.to_xarray(args[0])
-                    except Exception:
-                        pass
+                    ds = inputs.to_xarray(args[0])
+                    new_titles = list(ds.data_vars)
+                    units = [
+                        ds[data_var].attrs.get("units", "") for data_var in ds.data_vars
+                    ]
+            except Exception:
+                new_titles = []
+                units = []
+
+            # Initialize or append to existing subplot_titles
+            if new_titles:
+                if self._subplot_titles is None:
+                    # First-time setup
+                    self._subplot_titles = new_titles.copy()
+                else:
+                    # Append new ones
+                    self._subplot_titles.extend(new_titles)
+
+                # Determine where to place axis-specific titles
+                if kwargs.get("y") is not None:
+                    # x-axis titles provided explicitly
+                    if self._subplot_x_titles is None:
+                        self._subplot_x_titles = units.copy()
                     else:
-                        self._subplot_titles = list(ds.data_vars)
-                        titles = [
-                            ds[data_var].attrs.get("units", "")
-                            for data_var in ds.data_vars
-                        ]
-                        if kwargs.get("y") is not None:
-                            self._subplot_x_titles = titles
+                        self._subplot_x_titles.extend(units)
+                else:
+                    if method.__qualname__ == "Chart.heatmap":
+                        y_dim = times.guess_non_time_dim(ds)
+                        if self._subplot_y_titles is None:
+                            self._subplot_y_titles = [y_dim] * len(units)
                         else:
-                            if method.__qualname__ == "Chart.heatmap":
-                                self._subplot_y_titles = [
-                                    times.guess_non_time_dim(ds)
-                                ] * len(titles)
-                                self._subplot_z_titles = titles
-                            else:
-                                self._subplot_y_titles = titles
+                            self._subplot_y_titles.extend([y_dim] * len(units))
+
+                        if self._subplot_z_titles is None:
+                            self._subplot_z_titles = units.copy()
+                        else:
+                            self._subplot_z_titles.extend(units)
+                    else:
+                        if self._subplot_y_titles is None:
+                            self._subplot_y_titles = units.copy()
+                        else:
+                            self._subplot_y_titles.extend(units)
 
             return method(self, *args, **kwargs)
 
@@ -121,6 +145,25 @@ class Chart:
                 subplot_titles=self._subplot_titles,
                 **self._subplots_kwargs,
             )
+        else:
+            current_ann = self._fig.layout.annotations or []
+            # If title count changed, rebuild layout but keep traces & layout props
+            if len(current_ann) != len(self._subplot_titles):
+                existing_traces = list(self._fig.data)
+                old_layout = self._fig.layout.to_plotly_json()
+                new_fig = make_subplots(
+                    rows=self.rows,
+                    cols=self.columns,
+                    subplot_titles=self._subplot_titles,
+                    **self._subplots_kwargs,
+                )
+                for key, val in old_layout.items():
+                    if key == "annotations":
+                        continue
+                    new_fig.layout[key] = val
+                for trace in existing_traces:
+                    new_fig.add_trace(trace)
+                self._fig = new_fig
         return self._fig
 
     @property
@@ -290,7 +333,17 @@ class Chart:
         kwargs.pop("time_axis", None)
         colorscale = kwargs.pop("colorscale", "Viridis")
         levels = kwargs.pop("levels", None)
-
+        base_axis = 0
+        if self._fig is not None:
+            base_axis = len(self._fig.data)
+        # transpose the data to put the time dimension last
+        ds = inputs.to_xarray(args[0])
+        time_dim = times.guess_time_dim(ds)
+        new_order = [dim for dim in ds.dims if dim != time_dim] + [time_dim]
+        ds = ds.transpose(*new_order)
+        args_list = list(args)
+        args_list[0] = ds
+        args = tuple(args_list)
         base_traces = heatmap.heatmap(*args, **kwargs)
         traces = base_traces if isinstance(base_traces[0], list) else [base_traces]
 
@@ -359,7 +412,7 @@ class Chart:
             zip(traces, cs_list, lev_list), start=1
         ):
             for subtrace in trace:
-                coloraxis_name = f"coloraxis{i}"
+                coloraxis_name = f"coloraxis{i+base_axis}"
                 if bounds is not None:
                     custom_cmap = discrete_scale(cs_name, bounds)
                     subtrace.update(
@@ -375,10 +428,10 @@ class Chart:
                     self._rows = rows_needed
                     self._columns = self._columns or 1
 
-                y0, y1 = self.fig.layout[f"yaxis{i}"].domain
+                y0, y1 = self.fig.layout[f"yaxis{i+base_axis}"].domain
                 height = y1 - y0
 
-                self.fig.update_layout(
+                self._fig.update_layout(
                     **{
                         coloraxis_name: dict(
                             colorscale=subtrace.colorscale,
@@ -393,15 +446,15 @@ class Chart:
                                 tickvals=bounds,
                             ),
                         ),
-                        "xaxis": dict(
-                            showspikes=True,
-                            spikethickness=0,
-                            spikemode="across",
-                            spikesnap="cursor",
-                        ),
                     }
                 )
-                self.add_trace(subtrace, row=i, col=1)
+                self._fig.update_xaxes(
+                    showspikes=True,
+                    spikethickness=0,
+                    spikemode="across",
+                    spikesnap="cursor",
+                )
+                self.add_trace(subtrace, row=i + base_axis, col=1)
 
     @set_subplot_titles
     def bar(self, *args, **kwargs):
