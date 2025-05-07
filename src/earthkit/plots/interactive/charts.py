@@ -337,7 +337,9 @@ class Chart:
         kwargs.pop("time_axis", None)
         colorscale = kwargs.pop("colorscale", "Viridis")
         levels = kwargs.pop("levels", None)
-        base_axis = kwargs.pop("base_axis", 0)
+        base_axis = 0
+        if self._fig is not None:
+            base_axis = len(self._fig.data)
 
         base_traces = heatmap.heatmap(*args, **kwargs)
         traces = base_traces if isinstance(base_traces[0], list) else [base_traces]
@@ -441,13 +443,13 @@ class Chart:
                                 tickvals=bounds,
                             ),
                         ),
-                        "xaxis": dict(
-                            showspikes=True,
-                            spikethickness=0,
-                            spikemode="across",
-                            spikesnap="cursor",
-                        ),
                     }
+                )
+                self._fig.update_xaxes(
+                    showspikes=True,
+                    spikethickness=0,
+                    spikemode="across",
+                    spikesnap="cursor",
                 )
                 self.add_trace(subtrace, row=i + base_axis, col=1)
 
