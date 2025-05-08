@@ -16,6 +16,7 @@ import warnings
 
 import earthkit.data
 import numpy as np
+import pandas as pd
 
 from earthkit.plots.interactive import times
 
@@ -163,6 +164,8 @@ def get_xarray_kwargs(data, axes, kwargs):
                     )
 
         kwargs[axis] = data[attr].values
+        if all(isinstance(val, np.timedelta64) for val in kwargs[axis]):
+            kwargs[axis] = [str(pd.to_timedelta(val)) for val in kwargs[axis]]
         axis_attrs[axis] = attr
 
     return kwargs
