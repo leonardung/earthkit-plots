@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 import warnings
 
 import earthkit.data
@@ -165,7 +166,14 @@ def get_xarray_kwargs(data, axes, kwargs):
 
         kwargs[axis] = data[attr].values
         if all(isinstance(val, np.timedelta64) for val in kwargs[axis]):
-            kwargs[axis] = [str(pd.to_timedelta(val)) for val in kwargs[axis]]
+            kwargs[axis] = [stringify_timedelta64(val) for val in kwargs[axis]]
         axis_attrs[axis] = attr
 
     return kwargs
+
+
+def stringify_timedelta64(s):
+    s = str(pd.to_timedelta(s))
+    s = re.sub(r"^0 days\s*", "", s)
+    s = re.sub(r"^(\d+)\s+days\s*", r"\1 d ", s)
+    return s
