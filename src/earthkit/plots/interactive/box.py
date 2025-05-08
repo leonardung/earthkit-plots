@@ -71,7 +71,7 @@ def box(*args, quantiles=DEFAULT_QUANTILES, time_axis=0, **kwargs):
     quantile_values = np.quantile(kwargs.pop("y"), quantiles, axis=time_axis)
 
     x = kwargs["x"]
-    width = float(x[1] - x[0]) * 1e-06
+    width = float(x[1] - x[0]) * 1e-06 if isinstance(x[0], np.datetime64) else None
 
     traces = []
     traces.append(
@@ -82,7 +82,9 @@ def box(*args, quantiles=DEFAULT_QUANTILES, time_axis=0, **kwargs):
             q1=quantile_values[1],
             q3=quantile_values[-2],
             median=quantile_values[len(quantiles) // 2],
-            width=width * (THICKEST if not extra_boxes else THINNEST),
+            width=(
+                width * (THICKEST if not extra_boxes else THINNEST) if width else None
+            ),
             hoverinfo="skip",
             **kwargs,
         )
@@ -98,7 +100,7 @@ def box(*args, quantiles=DEFAULT_QUANTILES, time_axis=0, **kwargs):
                 q1=quantile_values[1 + (j + 1)],
                 q3=quantile_values[-2 - (j + 1)],
                 median=quantile_values[len(quantiles) // 2],
-                width=width * THICKEST,
+                width=width * THICKEST if width else None,
                 hoverinfo="skip",
                 **kwargs,
             )
